@@ -47,15 +47,34 @@ interface LoginResponse {
 export class B1Session {
   private readonly http: AxiosInstance;
   private readonly config: B1Config;
+  private readonly basePathname: string;
   private cookie: string | null = null;
   private loginPromise: Promise<void> | null = null;
 
   constructor(config: B1Config = loadB1Config()) {
     this.config = config;
+    this.basePathname = new URL(config.baseUrl).pathname;
     this.http = axios.create({
       baseURL: config.baseUrl,
       validateStatus: () => true,
+      timeout: 30000,
     });
+  }
+
+  /**
+   * Most Service Layer @odata.nextLink values are relative to the service
+   * root (e.g. "BusinessPartners?$skip=20"), which combines cleanly with our
+   * baseURL. But $crossjoin nextLinks come back server-root-relative
+   * (e.g. "/b1s/v2/$crossjoin(...)&$skip=20"), which already includes the
+   * service path -- combined with baseURL as-is it duplicates that path
+   * segment ("/b1s/v2/b1s/v2/..."). Strip the known base path so both
+   * shapes resolve to the same place.
+   */
+  private normalizePath(path: string): string {
+    if (path.startsWith(this.basePathname)) {
+      return path.slice(this.basePathname.length);
+    }
+    return path;
   }
 
   private async login(): Promise<void> {
@@ -91,9 +110,10 @@ export class B1Session {
   }
 
   /** GET a Service Layer resource, re-authenticating once if the session expired. */
-  async get<T = unknown>(path: string, params?: AxiosRequestConfig["params"]): Promise<T> {
+  async get<T = unknown>(rawPath: string, params?: AxiosRequestConfig["params"]): Promise<T> {
     await this.ensureSession();
 
+    const path = this.normalizePath(rawPath);
     const doRequest = () =>
       this.http.get<T>(path, {
         params,

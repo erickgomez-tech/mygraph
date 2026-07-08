@@ -1,0 +1,9 @@
+applications:
+  - name: mygraph
+    memory: 256M
+    disk_quota: 512M
+    buildpacks:
+      - nodejs_buildpack
+    command: node dist/startup.js
+    env:
+      NPM_CONFIG_PRODUCTION: false

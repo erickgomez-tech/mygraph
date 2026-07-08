@@ -1,0 +1,218 @@
+openapi: 3.0.3
+info:
+  title: SAP B1 Knowledge Graph API
+  description: Read access to the BusinessPartner + Invoice knowledge graph ingested from SAP B1 Service Layer.
+  version: 1.0.0
+servers:
+  - url: https://mygraph.cfapps.us10-001.hana.ondemand.com
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness check
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /graph/bp/{cardCode}:
+    get:
+      operationId: getBusinessPartnerGraph
+      summary: Get a BusinessPartner and its owned AR/AP invoices (with lines)
+      description: Returns the BusinessPartner node plus every Invoice node it owns, each with its InvoiceLine nodes.
+      parameters:
+        - name: cardCode
+          in: path
+          required: true
+          description: SAP B1 BusinessPartner CardCode
+          schema:
+            type: string
+          example: C20000
+      responses:
+        "200":
+          description: BusinessPartner subgraph found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessPartnerSubgraph"
+        "404":
+          description: No BusinessPartner with this CardCode in the graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Graph store has not been populated yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    # Explicitly named fields per node type instead of a single generic
+    # "properties: object, additionalProperties: true" bag -- low-code
+    # importers (SAP Build included) build their internal mapping model
+    # from declared schema fields and silently drop truly freeform,
+    # undeclared object content, which is what caused the Action test to
+    # come back with "properties": {}. BusinessPartner is the one case
+    # that genuinely has ~300 tenant-dependent fields (incl. U_* custom
+    # fields), so it keeps additionalProperties: true as a fallback for
+    # anything not explicitly listed.
+    BusinessPartnerProperties:
+      type: object
+      properties:
+        CardCode:
+          type: string
+        CardName:
+          type: string
+          nullable: true
+        CardType:
+          type: string
+          enum: [cCustomer, cSupplier, cLid]
+        GroupCode:
+          type: integer
+          nullable: true
+        Currency:
+          type: string
+          nullable: true
+        Valid:
+          type: string
+          enum: [tYES, tNO]
+          nullable: true
+        Frozen:
+          type: string
+          enum: [tYES, tNO]
+          nullable: true
+        Balance:
+          type: number
+          nullable: true
+        CreditLimit:
+          type: number
+          nullable: true
+      additionalProperties: true
+    InvoiceProperties:
+      type: object
+      properties:
+        DocEntry:
+          type: integer
+        DocNum:
+          type: integer
+          nullable: true
+        CardCode:
+          type: string
+        CardName:
+          type: string
+          nullable: true
+        DocDate:
+          type: string
+          nullable: true
+        DocDueDate:
+          type: string
+          nullable: true
+        DocTotal:
+          type: number
+        DocCurrency:
+          type: string
+          nullable: true
+        DocumentStatus:
+          type: string
+          nullable: true
+        direction:
+          type: string
+          enum: [AR, AP]
+      additionalProperties: false
+    InvoiceLineProperties:
+      type: object
+      properties:
+        LineNum:
+          type: integer
+        ItemCode:
+          type: string
+          nullable: true
+        ItemDescription:
+          type: string
+          nullable: true
+        Quantity:
+          type: number
+          nullable: true
+        Price:
+          type: number
+          nullable: true
+        LineTotal:
+          type: number
+          nullable: true
+        WarehouseCode:
+          type: string
+          nullable: true
+        AccountCode:
+          type: string
+          nullable: true
+      additionalProperties: false
+    BusinessPartnerNode:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "BP:C20000"
+        type:
+          type: string
+          enum: [BusinessPartner]
+        properties:
+          $ref: "#/components/schemas/BusinessPartnerProperties"
+      additionalProperties: false
+    InvoiceNode:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "Invoice:AR:1"
+        type:
+          type: string
+          enum: [Invoice]
+        properties:
+          $ref: "#/components/schemas/InvoiceProperties"
+      additionalProperties: false
+    InvoiceLineNode:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "Invoice:AR:1:Line:0"
+        type:
+          type: string
+          enum: [InvoiceLine]
+        properties:
+          $ref: "#/components/schemas/InvoiceLineProperties"
+      additionalProperties: false
+    InvoiceWithLines:
+      type: object
+      properties:
+        invoice:
+          $ref: "#/components/schemas/InvoiceNode"
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceLineNode"
+      additionalProperties: false
+    BusinessPartnerSubgraph:
+      type: object
+      properties:
+        businessPartner:
+          $ref: "#/components/schemas/BusinessPartnerNode"
+        invoices:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceWithLines"
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      additionalProperties: false

@@ -5,7 +5,7 @@ import { buildGraph } from "./transformer";
 import { validateGraph } from "./validator";
 import { saveGraph } from "../storage/graphStore";
 
-async function main(): Promise<void> {
+export async function runIngestion(): Promise<void> {
   const session = new B1Session();
 
   console.log("Extracting BusinessPartners and Invoices from SAP B1 Service Layer...");
@@ -34,7 +34,9 @@ async function main(): Promise<void> {
   process.exitCode = validation.valid ? 0 : 1;
 }
 
-main().catch((err) => {
-  console.error("Ingestion failed:", err);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  runIngestion().catch((err) => {
+    console.error("Ingestion failed:", err);
+    process.exitCode = 1;
+  });
+}

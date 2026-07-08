@@ -22,36 +22,37 @@ export const businessPartnerSchema = z
 
 export type BusinessPartner = z.infer<typeof businessPartnerSchema>;
 
-export const invoiceLineSchema = z
-  .object({
-    LineNum: z.number().int(),
-    ItemCode: z.string().nullable().optional(),
-    ItemDescription: z.string().nullable().optional(),
-    Quantity: z.number().nullable().optional(),
-    Price: z.number().nullable().optional(),
-    LineTotal: z.number().nullable().optional(),
-    WarehouseCode: z.string().nullable().optional(),
-    AccountCode: z.string().nullable().optional(),
-  })
-  .passthrough();
+// No .passthrough() here (unlike BusinessPartner): SAP B1 invoice lines carry
+// ~230+ native fields we never use, and at 1000+ invoices that bulk is the
+// single biggest driver of ingestion memory. Omitting .passthrough() makes
+// zod strip everything except what's declared below during parsing, so the
+// graph only ever holds the fields the app actually consumes.
+export const invoiceLineSchema = z.object({
+  LineNum: z.number().int(),
+  ItemCode: z.string().nullable().optional(),
+  ItemDescription: z.string().nullable().optional(),
+  Quantity: z.number().nullable().optional(),
+  Price: z.number().nullable().optional(),
+  LineTotal: z.number().nullable().optional(),
+  WarehouseCode: z.string().nullable().optional(),
+  AccountCode: z.string().nullable().optional(),
+});
 
 export type InvoiceLine = z.infer<typeof invoiceLineSchema>;
 
 /** Shared shape for AR Invoices and AP Invoices (PurchaseInvoices) entities. */
-export const invoiceSchema = z
-  .object({
-    DocEntry: z.number().int(),
-    DocNum: z.number().int().nullable().optional(),
-    CardCode: z.string().min(1),
-    CardName: z.string().nullable().optional(),
-    DocDate: z.string().nullable().optional(),
-    DocDueDate: z.string().nullable().optional(),
-    DocTotal: z.number(),
-    DocCurrency: z.string().nullable().optional(),
-    DocumentStatus: z.string().nullable().optional(),
-    DocumentLines: z.array(invoiceLineSchema).default([]),
-  })
-  .passthrough();
+export const invoiceSchema = z.object({
+  DocEntry: z.number().int(),
+  DocNum: z.number().int().nullable().optional(),
+  CardCode: z.string().min(1),
+  CardName: z.string().nullable().optional(),
+  DocDate: z.string().nullable().optional(),
+  DocDueDate: z.string().nullable().optional(),
+  DocTotal: z.number(),
+  DocCurrency: z.string().nullable().optional(),
+  DocumentStatus: z.string().nullable().optional(),
+  DocumentLines: z.array(invoiceLineSchema).default([]),
+});
 
 export type Invoice = z.infer<typeof invoiceSchema>;
 
