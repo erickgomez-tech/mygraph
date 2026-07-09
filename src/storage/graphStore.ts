@@ -63,3 +63,87 @@ export async function getBusinessPartnerSubgraph(
 
   return { businessPartner, invoices };
 }
+
+export interface BusinessPartnerSummary {
+  businessPartner: {
+    CardCode: string;
+    CardName: string | null;
+    CardType: string | null;
+    Currency: string | null;
+    Balance: number | null;
+    CreditLimit: number | null;
+  };
+  invoiceSummary: {
+    AR: { count: number; totalDocTotal: number };
+    AP: { count: number; totalDocTotal: number };
+  };
+  recentInvoices: Array<{
+    id: string;
+    direction: string;
+    docNum: number | null;
+    docDate: string | null;
+    docTotal: number;
+    documentStatus: string | null;
+  }>;
+}
+
+/**
+ * A byte-budget-friendly view of a BusinessPartner's invoices for consumers
+ * with hard response-size limits (e.g. SAP Joule Studio Actions, which log
+ * the full response and reject it past a byte_limit_size_exception once a
+ * BP has enough invoices/lines). Drops line-item detail and caps the invoice
+ * list to the most recent N by DocDate.
+ */
+export async function getBusinessPartnerSummary(
+  cardCode: string,
+  options: { recentCount?: number; storePath?: string } = {}
+): Promise<BusinessPartnerSummary | null> {
+  const { recentCount = 5, storePath } = options;
+  const subgraph = await getBusinessPartnerSubgraph(cardCode, storePath);
+  if (!subgraph) return null;
+
+  const bpProps = subgraph.businessPartner.properties as Record<string, unknown>;
+
+  const invoiceSummary = {
+    AR: { count: 0, totalDocTotal: 0 },
+    AP: { count: 0, totalDocTotal: 0 },
+  };
+
+  const allInvoices = subgraph.invoices.map(({ invoice }) => {
+    const props = invoice.properties as Record<string, unknown>;
+    const direction = String(props.direction) as "AR" | "AP";
+    const docTotal = typeof props.DocTotal === "number" ? props.DocTotal : 0;
+
+    if (direction === "AR" || direction === "AP") {
+      invoiceSummary[direction].count += 1;
+      invoiceSummary[direction].totalDocTotal += docTotal;
+    }
+
+    return {
+      id: invoice.id,
+      direction,
+      docNum: (props.DocNum as number | null | undefined) ?? null,
+      docDate: (props.DocDate as string | null | undefined) ?? null,
+      docTotal,
+      documentStatus: (props.DocumentStatus as string | null | undefined) ?? null,
+    };
+  });
+
+  const recentInvoices = allInvoices
+    .slice()
+    .sort((a, b) => (b.docDate ?? "").localeCompare(a.docDate ?? ""))
+    .slice(0, recentCount);
+
+  return {
+    businessPartner: {
+      CardCode: bpProps.CardCode as string,
+      CardName: (bpProps.CardName as string | null | undefined) ?? null,
+      CardType: (bpProps.CardType as string | null | undefined) ?? null,
+      Currency: (bpProps.Currency as string | null | undefined) ?? null,
+      Balance: (bpProps.Balance as number | null | undefined) ?? null,
+      CreditLimit: (bpProps.CreditLimit as number | null | undefined) ?? null,
+    },
+    invoiceSummary,
+    recentInvoices,
+  };
+}

@@ -24,8 +24,16 @@ paths:
   /graph/bp/{cardCode}:
     get:
       operationId: getBusinessPartnerGraph
-      summary: Get a BusinessPartner and its owned AR/AP invoices (with lines)
-      description: Returns the BusinessPartner node plus every Invoice node it owns, each with its InvoiceLine nodes.
+      summary: Get a BusinessPartner's invoice summary (default) or full invoice/line detail
+      description: >-
+        By default returns a compact summary: core BusinessPartner fields,
+        AR/AP invoice counts and totals, and the 5 most recent invoices
+        (headers only, no line items). This keeps the response well under
+        the size limits of consumers like SAP Joule Studio Actions, which
+        log the full response and reject oversized payloads. Pass
+        ?summary=false for the full subgraph (every invoice with every
+        line) -- only use that for direct API/agent consumers without a
+        response-size limit, not for the Joule Action.
       parameters:
         - name: cardCode
           in: path
@@ -34,13 +42,21 @@ paths:
           schema:
             type: string
           example: C20000
+        - name: summary
+          in: query
+          required: false
+          description: Set to "false" to get the full subgraph (every invoice + every line) instead of the summary. Defaults to true.
+          schema:
+            type: string
+            enum: ["true", "false"]
+            default: "true"
       responses:
         "200":
-          description: BusinessPartner subgraph found
+          description: BusinessPartner summary (default) or full subgraph (?summary=false)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BusinessPartnerSubgraph"
+                $ref: "#/components/schemas/BusinessPartnerSummary"
         "404":
           description: No BusinessPartner with this CardCode in the graph
           content:
@@ -199,6 +215,73 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InvoiceLineNode"
+      additionalProperties: false
+    InvoiceCountAndTotal:
+      type: object
+      properties:
+        count:
+          type: integer
+        totalDocTotal:
+          type: number
+      additionalProperties: false
+    RecentInvoiceSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "Invoice:AR:609"
+        direction:
+          type: string
+          enum: [AR, AP]
+        docNum:
+          type: integer
+          nullable: true
+        docDate:
+          type: string
+          nullable: true
+        docTotal:
+          type: number
+        documentStatus:
+          type: string
+          nullable: true
+      additionalProperties: false
+    BusinessPartnerSummary:
+      type: object
+      description: Default response shape for GET /graph/bp/{cardCode} -- compact, safe for size-limited consumers.
+      properties:
+        businessPartner:
+          type: object
+          properties:
+            CardCode:
+              type: string
+            CardName:
+              type: string
+              nullable: true
+            CardType:
+              type: string
+              nullable: true
+            Currency:
+              type: string
+              nullable: true
+            Balance:
+              type: number
+              nullable: true
+            CreditLimit:
+              type: number
+              nullable: true
+          additionalProperties: false
+        invoiceSummary:
+          type: object
+          properties:
+            AR:
+              $ref: "#/components/schemas/InvoiceCountAndTotal"
+            AP:
+              $ref: "#/components/schemas/InvoiceCountAndTotal"
+          additionalProperties: false
+        recentInvoices:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecentInvoiceSummary"
       additionalProperties: false
     BusinessPartnerSubgraph:
       type: object
