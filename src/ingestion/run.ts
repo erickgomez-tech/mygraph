@@ -8,10 +8,11 @@ import { saveGraph } from "../storage/graphStore";
 export async function runIngestion(): Promise<void> {
   const session = new B1Session();
 
-  console.log("Extracting BusinessPartners and Invoices from SAP B1 Service Layer...");
+  console.log("Extracting BusinessPartners and related entity headers from SAP B1 Service Layer...");
   const data = await extractAll(session);
+  const headerCount = [...data.headers.values()].reduce((sum, rows) => sum + rows.length, 0);
   console.log(
-    `Extracted ${data.businessPartners.length} BusinessPartners, ${data.arInvoices.length} AR Invoices, ${data.apInvoices.length} AP Invoices`
+    `Extracted ${data.businessPartners.length} BusinessPartners and ${headerCount} related headers across ${data.headers.size} entity types`
   );
 
   const graph = buildGraph(data);

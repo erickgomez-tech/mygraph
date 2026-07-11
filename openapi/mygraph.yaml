@@ -1,8 +1,16 @@
 openapi: 3.0.3
 info:
   title: SAP B1 Knowledge Graph API
-  description: Read access to the BusinessPartner + Invoice knowledge graph ingested from SAP B1 Service Layer.
-  version: 1.0.0
+  description: >-
+    Read access to the BusinessPartner 360° knowledge graph ingested from SAP
+    B1 Service Layer. The graph stores HEADER-ONLY records of every
+    BP-related entity (Activities, SalesOpportunities, ServiceCalls,
+    Quotations, Orders, DeliveryNotes, CreditNotes, Invoices,
+    IncomingPayments, PurchaseQuotations, PurchaseOrders, GoodsReceipts,
+    PurchaseInvoices, VendorPayments). Each record carries its native
+    Service Layer key (slCollection + slKeyProperty + key) so a follow-up
+    Joule Skill can fetch full detail straight from the Service Layer.
+  version: 2.0.0
 servers:
   - url: https://mygraph.cfapps.us10-001.hana.ondemand.com
 paths:
@@ -24,16 +32,18 @@ paths:
   /graph/bp/{cardCode}:
     get:
       operationId: getBusinessPartnerGraph
-      summary: Get a BusinessPartner's invoice summary (default) or full invoice/line detail
+      summary: Get a BusinessPartner's 360° summary (default) or the full related-entity subgraph
       description: >-
-        By default returns a compact summary: core BusinessPartner fields,
-        AR/AP invoice counts and totals, and the 5 most recent invoices
-        (headers only, no line items). This keeps the response well under
-        the size limits of consumers like SAP Joule Studio Actions, which
-        log the full response and reject oversized payloads. Pass
-        ?summary=false for the full subgraph (every invoice with every
-        line) -- only use that for direct API/agent consumers without a
-        response-size limit, not for the Joule Action.
+        By default returns a compact 360° summary: core BusinessPartner
+        fields, one aggregate row per related entity type (count, open
+        count, total sum) and the most recent headers per entity type
+        (number, date, status, title, comments, plus the Service Layer
+        coordinates to fetch full detail). This keeps the response well
+        under the size limits of consumers like SAP Joule Studio Actions,
+        which log the full response and reject oversized payloads. Pass
+        ?summary=false for the full subgraph (every related header node
+        grouped by entity type) -- only use that for direct API/agent
+        consumers without a response-size limit, not for the Joule Action.
       parameters:
         - name: cardCode
           in: path
@@ -45,14 +55,14 @@ paths:
         - name: summary
           in: query
           required: false
-          description: Set to "false" to get the full subgraph (every invoice + every line) instead of the summary. Defaults to true.
+          description: Set to "false" to get the full subgraph (every related header node) instead of the summary. Defaults to true.
           schema:
             type: string
             enum: ["true", "false"]
             default: "true"
       responses:
         "200":
-          description: BusinessPartner summary (default) or full subgraph (?summary=false)
+          description: BusinessPartner 360° summary (default) or full subgraph (?summary=false)
           content:
             application/json:
               schema:
@@ -75,9 +85,8 @@ components:
     # "properties: object, additionalProperties: true" bag -- low-code
     # importers (SAP Build included) build their internal mapping model
     # from declared schema fields and silently drop truly freeform,
-    # undeclared object content, which is what caused the Action test to
-    # come back with "properties": {}. BusinessPartner is the one case
-    # that genuinely has ~300 tenant-dependent fields (incl. U_* custom
+    # undeclared object content. BusinessPartner is the one case that
+    # genuinely has ~300 tenant-dependent fields (incl. U_* custom
     # fields), so it keeps additionalProperties: true as a fallback for
     # anything not explicitly listed.
     BusinessPartnerProperties:
@@ -112,64 +121,77 @@ components:
           type: number
           nullable: true
       additionalProperties: true
-    InvoiceProperties:
+    HeaderProperties:
       type: object
+      description: >-
+        Normalized header of one BP-related entity. slCollection +
+        slKeyProperty + key are the Service Layer coordinates for fetching
+        full detail (e.g. GET /Orders(42), GET /ServiceCalls(7)). Note the
+        key property differs per entity: DocEntry for documents/payments,
+        ActivityCode for Activities, SequentialNo for SalesOpportunities,
+        ServiceCallID for ServiceCalls.
       properties:
-        DocEntry:
+        entityType:
+          type: string
+          enum:
+            - Activity
+            - SalesOpportunity
+            - ServiceCall
+            - Quotation
+            - Order
+            - DeliveryNote
+            - CreditNote
+            - Invoice
+            - IncomingPayment
+            - PurchaseQuotation
+            - PurchaseOrder
+            - GoodsReceipt
+            - PurchaseInvoice
+            - VendorPayment
+        slCollection:
+          type: string
+          description: Service Layer collection to query for full detail
+          example: Orders
+        slKeyProperty:
+          type: string
+          description: Native key property name in the Service Layer
+          example: DocEntry
+        key:
           type: integer
-        DocNum:
+          description: Native key value
+        cardCode:
+          type: string
+          description: Owning BusinessPartner CardCode
+        number:
           type: integer
           nullable: true
-        CardCode:
-          type: string
-        CardName:
-          type: string
-          nullable: true
-        DocDate:
+          description: Human-facing number (DocNum where it exists, otherwise the key)
+        title:
           type: string
           nullable: true
-        DocDueDate:
+          description: OpportunityName, ServiceCall subject, activity details, or CardName for documents
+        date:
           type: string
           nullable: true
-        DocTotal:
-          type: number
-        DocCurrency:
+          description: Primary date (DocDate / ActivityDate / StartDate / CreationDate)
+        dueDate:
           type: string
           nullable: true
-        DocumentStatus:
+        status:
           type: string
           nullable: true
-        direction:
-          type: string
-          enum: [AR, AP]
-      additionalProperties: false
-    InvoiceLineProperties:
-      type: object
-      properties:
-        LineNum:
-          type: integer
-        ItemCode:
+          description: Normalized status, e.g. Open, Closed, Cancelled, Paid, Sold, Missed
+        comments:
           type: string
           nullable: true
-        ItemDescription:
-          type: string
-          nullable: true
-        Quantity:
+          description: Free-text comments/remarks/notes, truncated to 500 chars
+        total:
           type: number
           nullable: true
-        Price:
-          type: number
-          nullable: true
-        LineTotal:
-          type: number
-          nullable: true
-        WarehouseCode:
+        currency:
           type: string
           nullable: true
-        AccountCode:
-          type: string
-          nullable: true
-      additionalProperties: false
+      additionalProperties: true
     BusinessPartnerNode:
       type: object
       properties:
@@ -182,67 +204,65 @@ components:
         properties:
           $ref: "#/components/schemas/BusinessPartnerProperties"
       additionalProperties: false
-    InvoiceNode:
+    HeaderNode:
       type: object
       properties:
         id:
           type: string
-          example: "Invoice:AR:1"
+          example: "Order:42"
         type:
           type: string
-          enum: [Invoice]
+          description: Entity type (same values as HeaderProperties.entityType)
         properties:
-          $ref: "#/components/schemas/InvoiceProperties"
+          $ref: "#/components/schemas/HeaderProperties"
       additionalProperties: false
-    InvoiceLineNode:
+    RelatedEntitySummary:
       type: object
       properties:
-        id:
+        entityType:
           type: string
-          example: "Invoice:AR:1:Line:0"
-        type:
-          type: string
-          enum: [InvoiceLine]
-        properties:
-          $ref: "#/components/schemas/InvoiceLineProperties"
-      additionalProperties: false
-    InvoiceWithLines:
-      type: object
-      properties:
-        invoice:
-          $ref: "#/components/schemas/InvoiceNode"
-        lines:
-          type: array
-          items:
-            $ref: "#/components/schemas/InvoiceLineNode"
-      additionalProperties: false
-    InvoiceCountAndTotal:
-      type: object
-      properties:
+          example: Order
         count:
           type: integer
-        totalDocTotal:
+        openCount:
+          type: integer
+          description: How many records are in status Open
+        totalSum:
           type: number
+          nullable: true
+          description: Sum of totals where the entity carries one; null for payments/activities
       additionalProperties: false
-    RecentInvoiceSummary:
+    RecentRelatedHeader:
       type: object
       properties:
-        id:
+        entityType:
           type: string
-          example: "Invoice:AR:609"
-        direction:
+          example: ServiceCall
+        slCollection:
           type: string
-          enum: [AR, AP]
-        docNum:
+          example: ServiceCalls
+        slKeyProperty:
+          type: string
+          example: ServiceCallID
+        key:
+          type: integer
+        number:
           type: integer
           nullable: true
-        docDate:
+        title:
           type: string
           nullable: true
-        docTotal:
-          type: number
-        documentStatus:
+        date:
           type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        comments:
+          type: string
+          nullable: true
+        total:
+          type: number
           nullable: true
       additionalProperties: false
     BusinessPartnerSummary:
@@ -270,28 +290,30 @@ components:
               type: number
               nullable: true
           additionalProperties: false
-        invoiceSummary:
-          type: object
-          properties:
-            AR:
-              $ref: "#/components/schemas/InvoiceCountAndTotal"
-            AP:
-              $ref: "#/components/schemas/InvoiceCountAndTotal"
-          additionalProperties: false
-        recentInvoices:
+        relatedSummary:
           type: array
+          description: One aggregate row per related entity type present for this BP
           items:
-            $ref: "#/components/schemas/RecentInvoiceSummary"
+            $ref: "#/components/schemas/RelatedEntitySummary"
+        recentRelated:
+          type: array
+          description: Most recent headers per entity type, flattened and sorted by date descending
+          items:
+            $ref: "#/components/schemas/RecentRelatedHeader"
       additionalProperties: false
     BusinessPartnerSubgraph:
       type: object
+      description: Full response shape for GET /graph/bp/{cardCode}?summary=false.
       properties:
         businessPartner:
           $ref: "#/components/schemas/BusinessPartnerNode"
-        invoices:
-          type: array
-          items:
-            $ref: "#/components/schemas/InvoiceWithLines"
+        related:
+          type: object
+          description: Every related header node, grouped by entity type ("Order", "ServiceCall", ...)
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/HeaderNode"
       additionalProperties: false
     ErrorResponse:
       type: object

@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "SAP B1 Knowledge Graph API",
-    "description": "Read access to the BusinessPartner + Invoice knowledge graph ingested from SAP B1 Service Layer.",
-    "version": "1.0.0"
+    "description": "Read access to the BusinessPartner 360° knowledge graph ingested from SAP B1 Service Layer. The graph stores HEADER-ONLY records of every BP-related entity (Activities, SalesOpportunities, ServiceCalls, Quotations, Orders, DeliveryNotes, CreditNotes, Invoices, IncomingPayments, PurchaseQuotations, PurchaseOrders, GoodsReceipts, PurchaseInvoices, VendorPayments). Each record carries its native Service Layer key (slCollection + slKeyProperty + key) so a follow-up Joule Skill can fetch full detail straight from the Service Layer.",
+    "version": "2.0.0"
   },
   "servers": [
     {
@@ -38,8 +38,8 @@
     "/graph/bp/{cardCode}": {
       "get": {
         "operationId": "getBusinessPartnerGraph",
-        "summary": "Get a BusinessPartner's invoice summary (default) or full invoice/line detail",
-        "description": "By default returns a compact summary: core BusinessPartner fields, AR/AP invoice counts and totals, and the 5 most recent invoices (headers only, no line items). This keeps the response well under the size limits of consumers like SAP Joule Studio Actions, which log the full response and reject oversized payloads. Pass ?summary=false for the full subgraph (every invoice with every line) -- only use that for direct API/agent consumers without a response-size limit, not for the Joule Action.",
+        "summary": "Get a BusinessPartner's 360° summary (default) or the full related-entity subgraph",
+        "description": "By default returns a compact 360° summary: core BusinessPartner fields, one aggregate row per related entity type (count, open count, total sum) and the most recent headers per entity type (number, date, status, title, comments, plus the Service Layer coordinates to fetch full detail). This keeps the response well under the size limits of consumers like SAP Joule Studio Actions, which log the full response and reject oversized payloads. Pass ?summary=false for the full subgraph (every related header node grouped by entity type) -- only use that for direct API/agent consumers without a response-size limit, not for the Joule Action.",
         "parameters": [
           {
             "name": "cardCode",
@@ -55,7 +55,7 @@
             "name": "summary",
             "in": "query",
             "required": false,
-            "description": "Set to \"false\" to get the full subgraph (every invoice + every line) instead of the summary. Defaults to true.",
+            "description": "Set to \"false\" to get the full subgraph (every related header node) instead of the summary. Defaults to true.",
             "schema": {
               "type": "string",
               "enum": [
@@ -68,7 +68,7 @@
         ],
         "responses": {
           "200": {
-            "description": "BusinessPartner summary (default) or full subgraph (?summary=false)",
+            "description": "BusinessPartner 360° summary (default) or full subgraph (?summary=false)",
             "content": {
               "application/json": {
                 "schema": {
@@ -156,88 +156,86 @@
         },
         "additionalProperties": true
       },
-      "InvoiceProperties": {
+      "HeaderProperties": {
         "type": "object",
+        "description": "Normalized header of one BP-related entity. slCollection + slKeyProperty + key are the Service Layer coordinates for fetching full detail (e.g. GET /Orders(42), GET /ServiceCalls(7)). Note the key property differs per entity: DocEntry for documents/payments, ActivityCode for Activities, SequentialNo for SalesOpportunities, ServiceCallID for ServiceCalls.",
         "properties": {
-          "DocEntry": {
-            "type": "integer"
-          },
-          "DocNum": {
-            "type": "integer",
-            "nullable": true
-          },
-          "CardCode": {
-            "type": "string"
-          },
-          "CardName": {
-            "type": "string",
-            "nullable": true
-          },
-          "DocDate": {
-            "type": "string",
-            "nullable": true
-          },
-          "DocDueDate": {
-            "type": "string",
-            "nullable": true
-          },
-          "DocTotal": {
-            "type": "number"
-          },
-          "DocCurrency": {
-            "type": "string",
-            "nullable": true
-          },
-          "DocumentStatus": {
-            "type": "string",
-            "nullable": true
-          },
-          "direction": {
+          "entityType": {
             "type": "string",
             "enum": [
-              "AR",
-              "AP"
+              "Activity",
+              "SalesOpportunity",
+              "ServiceCall",
+              "Quotation",
+              "Order",
+              "DeliveryNote",
+              "CreditNote",
+              "Invoice",
+              "IncomingPayment",
+              "PurchaseQuotation",
+              "PurchaseOrder",
+              "GoodsReceipt",
+              "PurchaseInvoice",
+              "VendorPayment"
             ]
+          },
+          "slCollection": {
+            "type": "string",
+            "description": "Service Layer collection to query for full detail",
+            "example": "Orders"
+          },
+          "slKeyProperty": {
+            "type": "string",
+            "description": "Native key property name in the Service Layer",
+            "example": "DocEntry"
+          },
+          "key": {
+            "type": "integer",
+            "description": "Native key value"
+          },
+          "cardCode": {
+            "type": "string",
+            "description": "Owning BusinessPartner CardCode"
+          },
+          "number": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Human-facing number (DocNum where it exists, otherwise the key)"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "OpportunityName, ServiceCall subject, activity details, or CardName for documents"
+          },
+          "date": {
+            "type": "string",
+            "nullable": true,
+            "description": "Primary date (DocDate / ActivityDate / StartDate / CreationDate)"
+          },
+          "dueDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "description": "Normalized status, e.g. Open, Closed, Cancelled, Paid, Sold, Missed"
+          },
+          "comments": {
+            "type": "string",
+            "nullable": true,
+            "description": "Free-text comments/remarks/notes, truncated to 500 chars"
+          },
+          "total": {
+            "type": "number",
+            "nullable": true
+          },
+          "currency": {
+            "type": "string",
+            "nullable": true
           }
         },
-        "additionalProperties": false
-      },
-      "InvoiceLineProperties": {
-        "type": "object",
-        "properties": {
-          "LineNum": {
-            "type": "integer"
-          },
-          "ItemCode": {
-            "type": "string",
-            "nullable": true
-          },
-          "ItemDescription": {
-            "type": "string",
-            "nullable": true
-          },
-          "Quantity": {
-            "type": "number",
-            "nullable": true
-          },
-          "Price": {
-            "type": "number",
-            "nullable": true
-          },
-          "LineTotal": {
-            "type": "number",
-            "nullable": true
-          },
-          "WarehouseCode": {
-            "type": "string",
-            "nullable": true
-          },
-          "AccountCode": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "additionalProperties": false
+        "additionalProperties": true
       },
       "BusinessPartnerNode": {
         "type": "object",
@@ -258,98 +256,85 @@
         },
         "additionalProperties": false
       },
-      "InvoiceNode": {
+      "HeaderNode": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string",
-            "example": "Invoice:AR:1"
+            "example": "Order:42"
           },
           "type": {
             "type": "string",
-            "enum": [
-              "Invoice"
-            ]
+            "description": "Entity type (same values as HeaderProperties.entityType)"
           },
           "properties": {
-            "$ref": "#/components/schemas/InvoiceProperties"
+            "$ref": "#/components/schemas/HeaderProperties"
           }
         },
         "additionalProperties": false
       },
-      "InvoiceLineNode": {
+      "RelatedEntitySummary": {
         "type": "object",
         "properties": {
-          "id": {
+          "entityType": {
             "type": "string",
-            "example": "Invoice:AR:1:Line:0"
+            "example": "Order"
           },
-          "type": {
-            "type": "string",
-            "enum": [
-              "InvoiceLine"
-            ]
-          },
-          "properties": {
-            "$ref": "#/components/schemas/InvoiceLineProperties"
-          }
-        },
-        "additionalProperties": false
-      },
-      "InvoiceWithLines": {
-        "type": "object",
-        "properties": {
-          "invoice": {
-            "$ref": "#/components/schemas/InvoiceNode"
-          },
-          "lines": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/InvoiceLineNode"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "InvoiceCountAndTotal": {
-        "type": "object",
-        "properties": {
           "count": {
             "type": "integer"
           },
-          "totalDocTotal": {
-            "type": "number"
+          "openCount": {
+            "type": "integer",
+            "description": "How many records are in status Open"
+          },
+          "totalSum": {
+            "type": "number",
+            "nullable": true,
+            "description": "Sum of totals where the entity carries one; null for payments/activities"
           }
         },
         "additionalProperties": false
       },
-      "RecentInvoiceSummary": {
+      "RecentRelatedHeader": {
         "type": "object",
         "properties": {
-          "id": {
+          "entityType": {
             "type": "string",
-            "example": "Invoice:AR:609"
+            "example": "ServiceCall"
           },
-          "direction": {
+          "slCollection": {
             "type": "string",
-            "enum": [
-              "AR",
-              "AP"
-            ]
+            "example": "ServiceCalls"
           },
-          "docNum": {
+          "slKeyProperty": {
+            "type": "string",
+            "example": "ServiceCallID"
+          },
+          "key": {
+            "type": "integer"
+          },
+          "number": {
             "type": "integer",
             "nullable": true
           },
-          "docDate": {
+          "title": {
             "type": "string",
             "nullable": true
           },
-          "docTotal": {
-            "type": "number"
-          },
-          "documentStatus": {
+          "date": {
             "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "comments": {
+            "type": "string",
+            "nullable": true
+          },
+          "total": {
+            "type": "number",
             "nullable": true
           }
         },
@@ -360,78 +345,9 @@
         "description": "Default response shape for GET /graph/bp/{cardCode} -- compact, safe for size-limited consumers.",
         "properties": {
           "businessPartner": {
-            "type": "object",
-            "properties": {
-              "CardCode": {
-                "type": "string"
-              },
-              "CardName": {
-                "type": "string",
-                "nullable": true
-              },
-              "CardType": {
-                "type": "string",
-                "nullable": true
-              },
-              "Currency": {
-                "type": "string",
-                "nullable": true
-              },
-              "Balance": {
-                "type": "number",
-                "nullable": true
-              },
-              "CreditLimit": {
-                "type": "number",
-                "nullable": true
-              }
-            },
-            "additionalProperties": false
-          },
-          "invoiceSummary": {
-            "type": "object",
-            "properties": {
-              "AR": {
-                "$ref": "#/components/schemas/InvoiceCountAndTotal"
-              },
-              "AP": {
-                "$ref": "#/components/schemas/InvoiceCountAndTotal"
-              }
-            },
-            "additionalProperties": false
-          },
-          "recentInvoices": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RecentInvoiceSummary"
-            }
+            "type": "object"
           }
-        },
-        "additionalProperties": false
-      },
-      "BusinessPartnerSubgraph": {
-        "type": "object",
-        "properties": {
-          "businessPartner": {
-            "$ref": "#/components/schemas/BusinessPartnerNode"
-          },
-          "invoices": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/InvoiceWithLines"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "ErrorResponse": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
+        }
       }
     }
   }

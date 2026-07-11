@@ -1,10 +1,6 @@
 import { B1Session } from "../config/destinations";
-import {
-  BusinessPartner,
-  Invoice,
-  businessPartnerSchema,
-  invoiceSchema,
-} from "../types/graph";
+import { ENTITY_CONFIGS, EntityConfig } from "../config/entities";
+import { BusinessPartner, HeaderProperties, businessPartnerSchema } from "../types/graph";
 
 interface ODataPage<T> {
   value: T[];
@@ -13,10 +9,10 @@ interface ODataPage<T> {
 
 /**
  * Follows @odata.nextLink until the Service Layer stops returning one,
- * collecting every page. Service Layer paginates BusinessPartners/Invoices
- * by default (commonly 20-1000 rows per page depending on tenant config).
- * `initialParams` only applies to the first request -- every subsequent
- * nextLink already comes back with its query string fully composed.
+ * collecting every page. Service Layer paginates by default (commonly
+ * 20-1000 rows per page depending on tenant config). `initialParams` only
+ * applies to the first request -- every subsequent nextLink already comes
+ * back with its query string fully composed.
  */
 async function fetchAllPages<T>(
   session: B1Session,
@@ -39,8 +35,8 @@ async function fetchAllPages<T>(
 
 export interface ExtractedData {
   businessPartners: BusinessPartner[];
-  arInvoices: Invoice[];
-  apInvoices: Invoice[];
+  /** Normalized header rows keyed by node type ("Order", "ServiceCall", ...). */
+  headers: Map<string, HeaderProperties[]>;
 }
 
 export async function extractBusinessPartners(session: B1Session): Promise<BusinessPartner[]> {
@@ -56,52 +52,77 @@ export async function extractBusinessPartners(session: B1Session): Promise<Busin
   });
 }
 
-export async function extractARInvoices(session: B1Session): Promise<Invoice[]> {
-  // DocumentLines is a structural (complex-type collection) property, not a
-  // navigation property, so Service Layer returns it by default -- $expand
-  // is invalid here and the server rejects it with a 400.
-  //
-  // We tried trimming line payload size via
-  // $crossjoin(Invoices,Invoices/DocumentLines)?$expand=...($select=...) to
-  // ease memory pressure, but verified against this tenant that $crossjoin
-  // does NOT correlate each invoice with its own lines -- it's a true
-  // cartesian product (every row we sampled came back paired with DocEntry 1
-  // regardless of that invoice's actual line count). Do not use $crossjoin
-  // for bulk data reconstruction; it silently produces wrong invoice/line
-  // pairings. It remains valid for $filter-only existence checks (e.g. "does
-  // any invoice have a line with AccountCode X"), just not for rebuilding
-  // DocumentLines arrays.
-  const raw = await fetchAllPages<unknown>(session, "Invoices");
-  return raw.map((item, index) => {
-    const parsed = invoiceSchema.safeParse(item);
-    if (!parsed.success) {
-      throw new Error(
-        `AR Invoice at index ${index} failed schema validation: ${parsed.error.message}`
-      );
-    }
-    return parsed.data;
-  });
-}
+/**
+ * Header-only extraction for one entity. $select keeps the payload to the
+ * dozen fields the graph stores -- critical for Invoices/Orders where the
+ * default payload includes DocumentLines (a structural property that cannot
+ * be suppressed any other way; $expand is invalid on it and $crossjoin was
+ * verified on this tenant to produce wrong invoice/line pairings).
+ *
+ * If the tenant rejects the $select list (400 -- field renamed/absent on
+ * that patch level), retry once without $select: the zod strip schema then
+ * discards everything not declared, trading bandwidth for compatibility.
+ */
+export async function extractEntityHeaders(
+  session: B1Session,
+  config: EntityConfig
+): Promise<HeaderProperties[]> {
+  let raw: unknown[];
+  try {
+    raw = await fetchAllPages<unknown>(session, config.collection, {
+      $select: config.select.join(","),
+    });
+  } catch (err) {
+    console.warn(
+      `[${config.collection}] $select rejected (${(err as Error).message.slice(0, 200)}); retrying without $select`
+    );
+    raw = await fetchAllPages<unknown>(session, config.collection);
+  }
 
-export async function extractAPInvoices(session: B1Session): Promise<Invoice[]> {
-  const raw = await fetchAllPages<unknown>(session, "PurchaseInvoices");
-  return raw.map((item, index) => {
-    const parsed = invoiceSchema.safeParse(item);
+  const headers: HeaderProperties[] = [];
+  let invalid = 0;
+  let unlinked = 0;
+
+  for (const item of raw) {
+    const parsed = config.schema.safeParse(item);
     if (!parsed.success) {
-      throw new Error(
-        `AP Invoice at index ${index} failed schema validation: ${parsed.error.message}`
-      );
+      invalid += 1;
+      if (invalid <= 3) {
+        console.warn(`[${config.collection}] row failed schema validation: ${parsed.error.message}`);
+      }
+      continue;
     }
-    return parsed.data;
-  });
+    const header = config.normalize(parsed.data);
+    if (header === null) {
+      unlinked += 1; // no owning BP (e.g. account payment, unlinked activity)
+      continue;
+    }
+    headers.push(header);
+  }
+
+  if (invalid > 0) {
+    console.warn(`[${config.collection}] skipped ${invalid} row(s) that failed schema validation`);
+  }
+  if (unlinked > 0) {
+    console.log(`[${config.collection}] skipped ${unlinked} row(s) with no owning BusinessPartner`);
+  }
+
+  return headers;
 }
 
 export async function extractAll(session: B1Session): Promise<ExtractedData> {
-  // Sequential, not Promise.all: keeps peak memory bounded to one large
-  // paginated fetch in flight at a time instead of three concurrently.
+  // Sequential, not Promise.all: keeps peak memory bounded to one paginated
+  // fetch in flight at a time, and avoids hammering the Service Layer with
+  // 15 concurrent collection scans.
   const businessPartners = await extractBusinessPartners(session);
-  const arInvoices = await extractARInvoices(session);
-  const apInvoices = await extractAPInvoices(session);
+  console.log(`[BusinessPartners] extracted ${businessPartners.length}`);
 
-  return { businessPartners, arInvoices, apInvoices };
+  const headers = new Map<string, HeaderProperties[]>();
+  for (const config of ENTITY_CONFIGS) {
+    const rows = await extractEntityHeaders(session, config);
+    headers.set(config.nodeType, rows);
+    console.log(`[${config.collection}] extracted ${rows.length} header(s)`);
+  }
+
+  return { businessPartners, headers };
 }

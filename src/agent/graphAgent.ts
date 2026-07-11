@@ -8,7 +8,7 @@ const client = new Anthropic();
 const getBusinessPartnerGraph = betaZodTool({
   name: "get_business_partner_graph",
   description:
-    "Look up a SAP B1 BusinessPartner (customer or supplier) by its CardCode and return its data plus every AR/AP invoice it owns, including invoice lines (item, quantity, price, account code). Use this whenever the user asks about a specific business partner, their invoices, line items, or account balance.",
+    "Look up a SAP B1 BusinessPartner (customer or supplier) by its CardCode and return its data plus header-level records of every related entity, grouped by type: Activities, SalesOpportunities, ServiceCalls, Quotations, Orders, DeliveryNotes, CreditNotes, Invoices, IncomingPayments, PurchaseQuotations, PurchaseOrders, GoodsReceipts, PurchaseInvoices and VendorPayments. Each record carries its native Service Layer key (slCollection + slKeyProperty + key) plus number, date, status, title and comments -- use those keys to fetch full detail from the Service Layer if needed. Use this whenever the user asks about a specific business partner or anything they own.",
   inputSchema: z.object({
     cardCode: z
       .string()

@@ -1,4 +1,4 @@
-import { Graph, Invoice, InvoiceLine } from "../types/graph";
+import { Graph, HeaderProperties } from "../types/graph";
 
 export interface ValidationError {
   code: string;
@@ -21,7 +21,7 @@ function isParseableDate(value: unknown): boolean {
  * Graph-level integrity checks. Per-field shape validation already happened
  * against the zod schemas at extraction time (src/types/graph.ts); this pass
  * checks things only visible once the whole graph is assembled: dangling
- * references, duplicate ids, orphaned invoices, and value ranges.
+ * references, duplicate ids, orphaned header nodes, and value ranges.
  */
 export function validateGraph(graph: Graph): ValidationResult {
   const errors: ValidationError[] = [];
@@ -56,63 +56,43 @@ export function validateGraph(graph: Graph): ValidationResult {
     }
   }
 
-  const invoiceOwnerCount = new Map<string, number>();
+  const ownerCount = new Map<string, number>();
   for (const edge of graph.edges) {
     if (edge.type === "owns") {
-      invoiceOwnerCount.set(edge.to, (invoiceOwnerCount.get(edge.to) ?? 0) + 1);
+      ownerCount.set(edge.to, (ownerCount.get(edge.to) ?? 0) + 1);
     }
   }
 
   for (const node of graph.nodes) {
-    if (node.type !== "Invoice") continue;
+    if (node.type === "BusinessPartner") continue;
 
-    const owners = invoiceOwnerCount.get(node.id) ?? 0;
+    const owners = ownerCount.get(node.id) ?? 0;
     if (owners === 0) {
       errors.push({
-        code: "ORPHANED_INVOICE",
-        message: `Invoice ${node.id} has no owning BusinessPartner`,
+        code: "ORPHANED_HEADER",
+        message: `${node.type} ${node.id} has no owning BusinessPartner`,
         nodeId: node.id,
       });
     } else if (owners > 1) {
       errors.push({
         code: "MULTIPLE_OWNERS",
-        message: `Invoice ${node.id} is owned by ${owners} BusinessPartners`,
+        message: `${node.type} ${node.id} is owned by ${owners} BusinessPartners`,
         nodeId: node.id,
       });
     }
 
-    const invoice = node.properties as Invoice;
-    if (typeof invoice.DocTotal === "number" && invoice.DocTotal < 0) {
+    const header = node.properties as unknown as HeaderProperties;
+    if (typeof header.total === "number" && header.total < 0) {
       errors.push({
-        code: "NEGATIVE_DOC_TOTAL",
-        message: `Invoice ${node.id} has negative DocTotal (${invoice.DocTotal})`,
+        code: "NEGATIVE_TOTAL",
+        message: `${node.type} ${node.id} has negative total (${header.total})`,
         nodeId: node.id,
       });
     }
-    if (invoice.DocDate !== undefined && invoice.DocDate !== null && !isParseableDate(invoice.DocDate)) {
+    if (header.date !== null && header.date !== undefined && !isParseableDate(header.date)) {
       errors.push({
-        code: "INVALID_DOC_DATE",
-        message: `Invoice ${node.id} has an unparseable DocDate (${String(invoice.DocDate)})`,
-        nodeId: node.id,
-      });
-    }
-  }
-
-  for (const node of graph.nodes) {
-    if (node.type !== "InvoiceLine") continue;
-
-    const line = node.properties as InvoiceLine;
-    if (typeof line.Quantity === "number" && line.Quantity < 0) {
-      errors.push({
-        code: "NEGATIVE_QUANTITY",
-        message: `InvoiceLine ${node.id} has negative Quantity (${line.Quantity})`,
-        nodeId: node.id,
-      });
-    }
-    if (typeof line.LineTotal === "number" && line.LineTotal < 0) {
-      errors.push({
-        code: "NEGATIVE_LINE_TOTAL",
-        message: `InvoiceLine ${node.id} has negative LineTotal (${line.LineTotal})`,
+        code: "INVALID_DATE",
+        message: `${node.type} ${node.id} has an unparseable date (${String(header.date)})`,
         nodeId: node.id,
       });
     }

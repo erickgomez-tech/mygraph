@@ -1,52 +1,20 @@
 import { ExtractedData } from "./extractor";
 import {
+  EntityNodeType,
   Graph,
   GraphEdge,
   GraphNode,
-  Invoice,
-  InvoiceDirection,
   bpNodeId,
-  invoiceLineNodeId,
-  invoiceNodeId,
+  entityNodeId,
 } from "../types/graph";
 
-function invoiceToGraph(
-  invoice: Invoice,
-  direction: InvoiceDirection
-): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
-
-  const invoiceId = invoiceNodeId(direction, invoice.DocEntry);
-  const { DocumentLines, ...invoiceProps } = invoice;
-
-  nodes.push({
-    id: invoiceId,
-    type: "Invoice",
-    properties: { ...invoiceProps, direction },
-  });
-
-  edges.push({
-    id: `owns:${invoice.CardCode}->${invoiceId}`,
-    type: "owns",
-    from: bpNodeId(invoice.CardCode),
-    to: invoiceId,
-  });
-
-  for (const line of DocumentLines) {
-    const lineId = invoiceLineNodeId(invoiceId, line.LineNum);
-    nodes.push({ id: lineId, type: "InvoiceLine", properties: line });
-    edges.push({
-      id: `has_line:${invoiceId}->${lineId}`,
-      type: "has_line",
-      from: invoiceId,
-      to: lineId,
-    });
-  }
-
-  return { nodes, edges };
-}
-
+/**
+ * Header-relation graph: one node per BusinessPartner, one header-only node
+ * per related entity (documents, payments, activities, opportunities,
+ * service calls), and a single `owns` edge from the BP to each. No line
+ * items -- Joule Skills fetch detail from the Service Layer using each
+ * node's slCollection/slKeyProperty/key.
+ */
 export function buildGraph(data: ExtractedData): Graph {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
@@ -55,16 +23,21 @@ export function buildGraph(data: ExtractedData): Graph {
     nodes.push({ id: bpNodeId(bp.CardCode), type: "BusinessPartner", properties: bp });
   }
 
-  for (const invoice of data.arInvoices) {
-    const built = invoiceToGraph(invoice, "AR");
-    nodes.push(...built.nodes);
-    edges.push(...built.edges);
-  }
-
-  for (const invoice of data.apInvoices) {
-    const built = invoiceToGraph(invoice, "AP");
-    nodes.push(...built.nodes);
-    edges.push(...built.edges);
+  for (const [nodeType, headers] of data.headers) {
+    for (const header of headers) {
+      const id = entityNodeId(nodeType as EntityNodeType, header.key);
+      nodes.push({
+        id,
+        type: nodeType as EntityNodeType,
+        properties: header as unknown as Record<string, unknown>,
+      });
+      edges.push({
+        id: `owns:${header.cardCode}->${id}`,
+        type: "owns",
+        from: bpNodeId(header.cardCode),
+        to: id,
+      });
+    }
   }
 
   return {

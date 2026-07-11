@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { Graph, GraphNode, bpNodeId } from "../types/graph";
+import { Graph, GraphNode, HeaderProperties, bpNodeId } from "../types/graph";
 
 function resolveStorePath(): string {
   return path.resolve(process.cwd(), process.env.GRAPH_STORE_PATH ?? "./data/graph.json");
@@ -30,9 +30,11 @@ export async function graphExists(storePath: string = resolveStorePath()): Promi
 
 export interface BusinessPartnerSubgraph {
   businessPartner: GraphNode;
-  invoices: Array<{ invoice: GraphNode; lines: GraphNode[] }>;
+  /** Every header node owned by this BP, grouped by entity type ("Order", "ServiceCall", ...). */
+  related: Record<string, GraphNode[]>;
 }
 
+/** Full 360° view of a BusinessPartner: the BP node plus every related header node grouped by entity type. */
 export async function getBusinessPartnerSubgraph(
   cardCode: string,
   storePath: string = resolveStorePath()
@@ -44,24 +46,39 @@ export async function getBusinessPartnerSubgraph(
   if (!businessPartner) return null;
 
   const nodesById = new Map(graph.nodes.map((n) => [n.id, n]));
-  const invoiceIds = graph.edges
-    .filter((e) => e.type === "owns" && e.from === bpId)
-    .map((e) => e.to);
+  const related: Record<string, GraphNode[]> = {};
 
-  const invoices = invoiceIds
-    .map((invoiceId) => nodesById.get(invoiceId))
-    .filter((n): n is GraphNode => n !== undefined)
-    .map((invoice) => {
-      const lineIds = graph.edges
-        .filter((e) => e.type === "has_line" && e.from === invoice.id)
-        .map((e) => e.to);
-      const lines = lineIds
-        .map((lineId) => nodesById.get(lineId))
-        .filter((n): n is GraphNode => n !== undefined);
-      return { invoice, lines };
-    });
+  for (const edge of graph.edges) {
+    if (edge.type !== "owns" || edge.from !== bpId) continue;
+    const node = nodesById.get(edge.to);
+    if (!node) continue;
+    (related[node.type] ??= []).push(node);
+  }
 
-  return { businessPartner, invoices };
+  return { businessPartner, related };
+}
+
+export interface RelatedEntitySummary {
+  entityType: string;
+  count: number;
+  /** How many are in status "Open". */
+  openCount: number;
+  /** Sum of totals where the entity carries one (documents, opportunities); null for payments/activities. */
+  totalSum: number | null;
+}
+
+export interface RecentRelatedHeader {
+  entityType: string;
+  /** Service Layer collection + key property + key: everything a Joule Skill needs to fetch full detail. */
+  slCollection: string;
+  slKeyProperty: string;
+  key: number;
+  number: number | null;
+  title: string | null;
+  date: string | null;
+  status: string | null;
+  comments: string | null;
+  total: number | null;
 }
 
 export interface BusinessPartnerSummary {
@@ -73,66 +90,69 @@ export interface BusinessPartnerSummary {
     Balance: number | null;
     CreditLimit: number | null;
   };
-  invoiceSummary: {
-    AR: { count: number; totalDocTotal: number };
-    AP: { count: number; totalDocTotal: number };
-  };
-  recentInvoices: Array<{
-    id: string;
-    direction: string;
-    docNum: number | null;
-    docDate: string | null;
-    docTotal: number;
-    documentStatus: string | null;
-  }>;
+  /** One row per entity type that has at least one record for this BP. */
+  relatedSummary: RelatedEntitySummary[];
+  /** The most recent N records per entity type, flattened and sorted by date descending. */
+  recentRelated: RecentRelatedHeader[];
 }
 
 /**
- * A byte-budget-friendly view of a BusinessPartner's invoices for consumers
- * with hard response-size limits (e.g. SAP Joule Studio Actions, which log
- * the full response and reject it past a byte_limit_size_exception once a
- * BP has enough invoices/lines). Drops line-item detail and caps the invoice
- * list to the most recent N by DocDate.
+ * A byte-budget-friendly 360° view of a BusinessPartner for consumers with
+ * hard response-size limits (e.g. SAP Joule Studio Actions, which log the
+ * full response and reject it past a byte_limit_size_exception once a BP
+ * has enough documents). Aggregates counts/totals per entity type and caps
+ * the detail list to the most recent N headers per entity type.
  */
 export async function getBusinessPartnerSummary(
   cardCode: string,
-  options: { recentCount?: number; storePath?: string } = {}
+  options: { recentPerEntity?: number; storePath?: string } = {}
 ): Promise<BusinessPartnerSummary | null> {
-  const { recentCount = 5, storePath } = options;
+  const { recentPerEntity = 3, storePath } = options;
   const subgraph = await getBusinessPartnerSubgraph(cardCode, storePath);
   if (!subgraph) return null;
 
   const bpProps = subgraph.businessPartner.properties as Record<string, unknown>;
 
-  const invoiceSummary = {
-    AR: { count: 0, totalDocTotal: 0 },
-    AP: { count: 0, totalDocTotal: 0 },
-  };
+  const relatedSummary: RelatedEntitySummary[] = [];
+  const recentRelated: RecentRelatedHeader[] = [];
 
-  const allInvoices = subgraph.invoices.map(({ invoice }) => {
-    const props = invoice.properties as Record<string, unknown>;
-    const direction = String(props.direction) as "AR" | "AP";
-    const docTotal = typeof props.DocTotal === "number" ? props.DocTotal : 0;
+  for (const [entityType, nodes] of Object.entries(subgraph.related)) {
+    let openCount = 0;
+    let totalSum: number | null = null;
 
-    if (direction === "AR" || direction === "AP") {
-      invoiceSummary[direction].count += 1;
-      invoiceSummary[direction].totalDocTotal += docTotal;
+    const headers = nodes.map((node) => node.properties as unknown as HeaderProperties);
+
+    for (const header of headers) {
+      if (header.status === "Open") openCount += 1;
+      if (typeof header.total === "number") {
+        totalSum = (totalSum ?? 0) + header.total;
+      }
     }
 
-    return {
-      id: invoice.id,
-      direction,
-      docNum: (props.DocNum as number | null | undefined) ?? null,
-      docDate: (props.DocDate as string | null | undefined) ?? null,
-      docTotal,
-      documentStatus: (props.DocumentStatus as string | null | undefined) ?? null,
-    };
-  });
+    relatedSummary.push({ entityType, count: headers.length, openCount, totalSum });
 
-  const recentInvoices = allInvoices
-    .slice()
-    .sort((a, b) => (b.docDate ?? "").localeCompare(a.docDate ?? ""))
-    .slice(0, recentCount);
+    const recent = headers
+      .slice()
+      .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))
+      .slice(0, recentPerEntity)
+      .map((header) => ({
+        entityType,
+        slCollection: header.slCollection,
+        slKeyProperty: header.slKeyProperty,
+        key: header.key,
+        number: header.number,
+        title: header.title,
+        date: header.date,
+        status: header.status,
+        comments: header.comments,
+        total: header.total,
+      }));
+
+    recentRelated.push(...recent);
+  }
+
+  relatedSummary.sort((a, b) => a.entityType.localeCompare(b.entityType));
+  recentRelated.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
 
   return {
     businessPartner: {
@@ -143,7 +163,7 @@ export async function getBusinessPartnerSummary(
       Balance: (bpProps.Balance as number | null | undefined) ?? null,
       CreditLimit: (bpProps.CreditLimit as number | null | undefined) ?? null,
     },
-    invoiceSummary,
-    recentInvoices,
+    relatedSummary,
+    recentRelated,
   };
 }

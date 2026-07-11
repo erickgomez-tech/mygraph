@@ -1,14 +1,14 @@
 {
   "name": "sap-b1-kg-ingestion",
   "version": "0.1.0",
-  "description": "SAP B1 Service Layer ingestion into a JSON knowledge graph (BusinessPartners + Invoices)",
+  "description": "SAP B1 Service Layer ingestion into a header-only 360 knowledge graph (BusinessPartners + CRM, sales and purchase entities)",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "postinstall": "npm run build",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "ingest": "ts-node-dev --transpile-only --once src/ingestion/run.ts"
+    "ingest": "ts-node --transpile-only src/ingestion/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
