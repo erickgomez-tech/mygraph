@@ -145,7 +145,7 @@
             ],
             "nullable": true
           },
-          "Balance": {
+          "CurrentAccountBalance": {
             "type": "number",
             "nullable": true
           },
@@ -345,9 +345,79 @@
         "description": "Default response shape for GET /graph/bp/{cardCode} -- compact, safe for size-limited consumers.",
         "properties": {
           "businessPartner": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "CardCode": {
+                "type": "string"
+              },
+              "CardName": {
+                "type": "string",
+                "nullable": true
+              },
+              "CardType": {
+                "type": "string",
+                "nullable": true
+              },
+              "Currency": {
+                "type": "string",
+                "nullable": true
+              },
+              "CurrentAccountBalance": {
+                "type": "number",
+                "nullable": true
+              },
+              "CreditLimit": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "relatedSummary": {
+            "type": "array",
+            "description": "One aggregate row per related entity type present for this BP",
+            "items": {
+              "$ref": "#/components/schemas/RelatedEntitySummary"
+            }
+          },
+          "recentRelated": {
+            "type": "array",
+            "description": "Most recent headers per entity type, flattened and sorted by date descending",
+            "items": {
+              "$ref": "#/components/schemas/RecentRelatedHeader"
+            }
           }
-        }
+        },
+        "additionalProperties": false
+      },
+      "BusinessPartnerSubgraph": {
+        "type": "object",
+        "description": "Full response shape for GET /graph/bp/{cardCode}?summary=false.",
+        "properties": {
+          "businessPartner": {
+            "$ref": "#/components/schemas/BusinessPartnerNode"
+          },
+          "related": {
+            "type": "object",
+            "description": "Every related header node, grouped by entity type (\"Order\", \"ServiceCall\", ...)",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/HeaderNode"
+              }
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       }
     }
   }

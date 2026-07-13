@@ -114,7 +114,7 @@ components:
           type: string
           enum: [tYES, tNO]
           nullable: true
-        Balance:
+        CurrentAccountBalance:
           type: number
           nullable: true
         CreditLimit:
@@ -283,7 +283,7 @@ components:
             Currency:
               type: string
               nullable: true
-            Balance:
+            CurrentAccountBalance:
               type: number
               nullable: true
             CreditLimit:

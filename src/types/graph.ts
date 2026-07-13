@@ -15,7 +15,7 @@ export const businessPartnerSchema = z
     Currency: z.string().nullable().optional(),
     Valid: z.enum(["tYES", "tNO"]).nullable().optional(),
     Frozen: z.enum(["tYES", "tNO"]).nullable().optional(),
-    Balance: z.number().nullable().optional(),
+    CurrentAccountBalance: z.number().nullable().optional(),
     CreditLimit: z.number().nullable().optional(),
   })
   .passthrough();

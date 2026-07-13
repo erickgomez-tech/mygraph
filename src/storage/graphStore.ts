@@ -87,7 +87,7 @@ export interface BusinessPartnerSummary {
     CardName: string | null;
     CardType: string | null;
     Currency: string | null;
-    Balance: number | null;
+    CurrentAccountBalance: number | null;
     CreditLimit: number | null;
   };
   /** One row per entity type that has at least one record for this BP. */
@@ -160,7 +160,7 @@ export async function getBusinessPartnerSummary(
       CardName: (bpProps.CardName as string | null | undefined) ?? null,
       CardType: (bpProps.CardType as string | null | undefined) ?? null,
       Currency: (bpProps.Currency as string | null | undefined) ?? null,
-      Balance: (bpProps.Balance as number | null | undefined) ?? null,
+      CurrentAccountBalance: (bpProps.CurrentAccountBalance as number | null | undefined) ?? null,
       CreditLimit: (bpProps.CreditLimit as number | null | undefined) ?? null,
     },
     relatedSummary,
